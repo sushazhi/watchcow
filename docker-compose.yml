@@ -1,0 +1,29 @@
+services:
+  watchcow:
+    build: .
+    image: watchcow:v45
+    container_name: watchcow
+
+    # Privileged mode - required for eBPF
+    privileged: true
+
+    # Host network - access to host's Unix sockets
+    network_mode: host
+
+    # Host PID namespace - see all processes including trim_sac
+    pid: host
+
+    # Required for eBPF
+    cap_add:
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - NET_ADMIN
+      - BPF
+
+    # Required volumes
+    volumes:
+      - /sys/kernel/debug:/sys/kernel/debug:ro        # For tracepoint access
+      - /var/run/docker.sock:/var/run/docker.sock:rw  # For Docker monitoring
+
+    # Auto restart
+    restart: unless-stopped

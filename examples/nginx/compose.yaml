@@ -1,0 +1,56 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-example
+
+    # Optional: Load custom configuration from .env file
+    # Create .env to override any default values below
+    env_file:
+      - path: ./.env
+        required: false     # Optional, won't fail if missing
+
+    # Expose port (can be overridden with APP_PORT in .env)
+    ports:
+      - "${APP_PORT:-8080}:80"
+
+    # WatchCow metadata labels
+    # Default values are defined below with ${VAR:-default} syntax
+    # To customize: create .env file with variables like APP_TITLE=My Custom Title
+    labels:
+      # Required: Basic app information
+      watchcow.enable: "true"
+      watchcow.appName: "${APP_NAME:-nginx.example}"
+      watchcow.appID: "${APP_ID:-nginx-001}"
+      watchcow.entryName: "${APP_ENTRY_NAME:-nginx.example}"
+
+      # Display information
+      watchcow.title: "${APP_TITLE:-Nginx 示例}"
+      watchcow.desc: "${APP_DESC:-Nginx Web 服务器示例应用}"
+      watchcow.icon: "${APP_ICON:-https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/nginx.png}"
+      watchcow.category: "${APP_CATEGORY:-开发工具}"
+
+      # Network configuration
+      watchcow.protocol: "${APP_PROTOCOL:-http}"
+      watchcow.port: "${APP_PORT:-8080}"
+      watchcow.path: "${APP_PATH:-/}"
+      watchcow.fnDomain: "${APP_FN_DOMAIN:-nginx-example}"
+
+      # App type flags
+      watchcow.microApp: "${APP_MICRO_APP:-false}"
+      watchcow.nativeApp: "${APP_NATIVE_APP:-false}"
+      watchcow.isDisplay: "${APP_IS_DISPLAY:-true}"
+
+    # Optional: Custom volumes
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+
+    # Auto restart
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Documentation (not needed in container)
+docs/
+*.md
+!go.mod
+!go.sum
+
+# Build artifacts
+watchcow
+*.tar.gz
+*.o
+
+# Generated files (will be regenerated in container)
+internal/ebpf/bpf_*.go
+internal/ebpf/bpf_*.o
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Scripts (not needed in container)

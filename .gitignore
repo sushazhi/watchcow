@@ -1,0 +1,47 @@
+/.idea
+/references
+/.claude
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# bpf2go generated files
+internal/ebpf/bpf_bpfel.go
+internal/ebpf/bpf_bpfel.o
+internal/ebpf/bpf_bpfeb.go
+internal/ebpf/bpf_bpfeb.o
+
+# Compiled binaries
+/watchcow
+
+# Docker artifacts
+watchcow.tar.gz
+
+# IDE
+.vscode/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# Logs
+*.log
+/logs/
+/data/
+# User configuration overrides
+**/.env
+!**/.env.example
