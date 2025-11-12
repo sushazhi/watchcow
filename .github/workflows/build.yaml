@@ -19,7 +19,7 @@ jobs:
         with:
           images: ${{ secrets.REGISTRY }}/${{ secrets.REGISTRY_IMAGE }}
           tags: |
-            type=raw,enable=${{ github.ref == 'refs/heads/master' }},value=latest
+            type=raw,enable=${{ github.ref == 'refs/heads/main' }},value=latest
             type=raw,value={{date 'YYMMDD-HHmmss' tz='Asia/Shanghai'}}
 
       -
