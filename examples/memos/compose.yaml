@@ -1,7 +1,7 @@
 services:
-  nginx:
-    image: nginx:alpine
-    container_name: nginx
+  memos:
+    image: neosmemo/memos:stable
+    container_name: memos
     network_mode: bridge
 
     # Optional: Load custom configuration from .env file
@@ -12,7 +12,11 @@ services:
 
     # Expose port (can be overridden with APP_PORT in .env)
     ports:
-      - "${APP_PORT:-8080}:80"
+      - "${APP_PORT:-5230}:5230"
+
+    # Persistent data volume
+    volumes:
+      - ${DATA_PATH:-./volumes/memos_data}:/var/opt/memos
 
     # WatchCow metadata labels
     # Default values are defined below with ${VAR:-default} syntax
@@ -20,21 +24,21 @@ services:
     labels:
       # Required: Basic app information
       watchcow.enable: "true"
-      watchcow.appName: "${APP_NAME:-nginx}"
-      watchcow.appID: "${APP_ID:-1001}"
-      watchcow.entryName: "${APP_ENTRY_NAME:-nginx}"
+      watchcow.appName: "${APP_NAME:-memos}"
+      watchcow.appID: "${APP_ID:-1002}"
+      watchcow.entryName: "${APP_ENTRY_NAME:-memos}"
 
       # Display information
-      watchcow.title: "${APP_TITLE:-Nginx}"
-      watchcow.desc: "${APP_DESC:-Nginx Web 服务器示例应用}"
-      watchcow.icon: "${APP_ICON:-https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/nginx.png}"
-      watchcow.category: "${APP_CATEGORY:-开发工具}"
+      watchcow.title: "${APP_TITLE:-Memos}"
+      watchcow.desc: "${APP_DESC:-轻量级笔记与知识管理工具}"
+      watchcow.icon: "${APP_ICON:-https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/memos.png}"
+      watchcow.category: "${APP_CATEGORY:-效率工具}"
 
       # Network configuration
       watchcow.protocol: "${APP_PROTOCOL:-http}"
-      watchcow.port: "${APP_PORT:-8080}"
+      watchcow.port: "${APP_PORT:-5230}"
       watchcow.path: "${APP_PATH:-/}"
-      watchcow.fnDomain: "${APP_FN_DOMAIN:-nginx}"
+      watchcow.fnDomain: "${APP_FN_DOMAIN:-memos}"
 
       # App type flags
       watchcow.microApp: "${APP_MICRO_APP:-false}"

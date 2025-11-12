@@ -451,7 +451,7 @@ MIT License - 查看 [LICENSE](LICENSE) 文件了解详情
 - [Cilium eBPF](https://github.com/cilium/ebpf) - Go eBPF 库
 - [Docker](https://www.docker.com/) - 容器运行时
 - [飞牛OS](https://www.fnnas.com/) - 目标平台
-- [Dashboard Icons](https://github.com/walkxcode/dashboard-icons) - 应用图标资源
+- [Dashboard Icons](https://github.com/homarr-labs/dashboard-icons) - 应用图标资源
 
 ## 📮 联系方式
 

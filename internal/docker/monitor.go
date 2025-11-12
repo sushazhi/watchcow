@@ -386,11 +386,11 @@ func guessIcon(image string) string {
 	}
 
 	if iconName, ok := iconMap[imageName]; ok {
-		return fmt.Sprintf("https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/%s.png", iconName)
+		return fmt.Sprintf("https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/%s.png", iconName)
 	}
 
 	// Default Docker icon
-	return "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/docker.png"
+	return "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/docker.png"
 }
 
 // prettifyName converts container name to a nice title
