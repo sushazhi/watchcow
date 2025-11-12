@@ -239,6 +239,7 @@ func (m *Monitor) containerToAppInfo(ctr *types.Container) *interceptor.AppInfo 
 
 	// Network configuration
 	protocol := getLabel(ctr.Labels, "watchcow.protocol", "http")
+	host := getLabel(ctr.Labels, "watchcow.host", "")
 	port := getLabel(ctr.Labels, "watchcow.port", "")
 	path := getLabel(ctr.Labels, "watchcow.path", "/")
 	fnDomain := getLabel(ctr.Labels, "watchcow.fnDomain", fmt.Sprintf("docker-%s", name))
@@ -268,7 +269,7 @@ func (m *Monitor) containerToAppInfo(ctr *types.Container) *interceptor.AppInfo 
 		Type:      "url",
 		URI: map[string]interface{}{
 			"protocol": protocol,
-			"host":     "",
+			"host":     host,
 			"port":     port,
 			"path":     path,
 			"fnDomain": fnDomain,

@@ -1,0 +1,32 @@
+services:
+  bilibili:
+    image: busybox:uclibc
+    container_name: bilibili-bookmark
+    command: sleep infinity
+    network_mode: bridge
+    restart: unless-stopped
+
+    labels:
+      # Enable WatchCow discovery
+      watchcow.enable: "true"
+      watchcow.appName: "bilibili"
+      watchcow.appID: "bookmark-bilibili"
+      watchcow.entryName: "bilibili"
+
+      # Display information
+      watchcow.title: "哔哩哔哩"
+      watchcow.desc: "弹幕视频网站"
+      watchcow.icon: "https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/bilibili.png"
+      watchcow.category: "娱乐"
+
+      # External URL configuration
+      watchcow.protocol: "https"
+      watchcow.host: "www.bilibili.com"
+      watchcow.port: "443"
+      watchcow.path: "/"
+      watchcow.fnDomain: "bilibili"
+
+      # App type
+      watchcow.microApp: "false"
+      watchcow.nativeApp: "false"
+      watchcow.isDisplay: "true"
