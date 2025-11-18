@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
@@ -218,7 +217,7 @@ func (m *Monitor) scanContainers(ctx context.Context) {
 }
 
 // containerToAppInfo converts a Docker container to AppInfo
-func (m *Monitor) containerToAppInfo(ctr *types.Container) *interceptor.AppInfo {
+func (m *Monitor) containerToAppInfo(ctr *container.Summary) *interceptor.AppInfo {
 	// Check if WatchCow is enabled for this container
 	if ctr.Labels["watchcow.enable"] != "true" {
 		// Skip containers without watchcow.enable=true
@@ -303,7 +302,7 @@ func getBoolLabel(labels map[string]string, key string, fallback bool) bool {
 }
 
 // getFirstPublicPort gets the first public port from container
-func getFirstPublicPort(ctr *types.Container) string {
+func getFirstPublicPort(ctr *container.Summary) string {
 	for _, port := range ctr.Ports {
 		if port.PublicPort > 0 {
 			return strconv.Itoa(int(port.PublicPort))
@@ -369,6 +368,8 @@ func prettifyName(name string) string {
 func (m *Monitor) Stop() {
 	close(m.stopCh)
 	if m.cli != nil {
-		m.cli.Close()
+		if err := m.cli.Close(); err != nil {
+			log.Printf("⚠️  Error closing Docker client: %v", err)
+		}
 	}
 }
