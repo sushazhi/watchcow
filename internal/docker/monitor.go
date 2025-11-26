@@ -99,6 +99,9 @@ func (m *Monitor) runOperationWorker(ctx context.Context) {
 				err = m.installer.InstallLocal(op.AppDir)
 				// Clean up temp directory after install (success or fail)
 				os.RemoveAll(op.AppDir)
+			case "start":
+				slog.Info("Starting fnOS app", "app", op.AppName)
+				err = m.installer.StartApp(op.AppName)
 			case "stop":
 				slog.Info("Stopping fnOS app", "app", op.AppName)
 				err = m.installer.StopApp(op.AppName)
@@ -189,8 +192,14 @@ func (m *Monitor) handleDockerEvent(ctx context.Context, event events.Message) {
 	case "start":
 		slog.Info("Container started", "container", containerName, "id", containerID)
 
-		// Check if this container should be managed
-		labels := event.Actor.Attributes
+		// Inspect container to get full labels (event.Actor.Attributes is incomplete)
+		info, err := m.cli.ContainerInspect(ctx, containerID)
+		if err != nil {
+			slog.Debug("Failed to inspect container", "container", containerName, "error", err)
+			return
+		}
+
+		labels := info.Config.Labels
 		if shouldInstall(labels) {
 			go m.handleContainerStart(ctx, containerID, containerName, labels)
 		}
@@ -203,6 +212,15 @@ func (m *Monitor) handleDockerEvent(ctx context.Context, event events.Message) {
 		slog.Info("Container destroyed", "container", containerName, "id", containerID)
 		m.handleContainerDestroy(ctx, containerID, containerName)
 	}
+}
+
+// getAppNameFromLabels extracts appName from labels
+func getAppNameFromLabels(labels map[string]string, containerName string) string {
+	appName := labels["watchcow.appname"]
+	if appName == "" {
+		appName = "watchcow." + containerName
+	}
+	return appName
 }
 
 // shouldInstall checks if a container should be installed as fnOS app
@@ -219,38 +237,35 @@ func shouldInstall(labels map[string]string) bool {
 
 // handleContainerStart handles container start event
 func (m *Monitor) handleContainerStart(ctx context.Context, containerID, containerName string, labels map[string]string) {
-	// Check if already tracked in memory
-	m.mu.RLock()
-	if state, exists := m.containers[containerID]; exists && state.Installed {
-		m.mu.RUnlock()
-		slog.Debug("Container already tracked as installed", "container", containerName)
-		return
-	}
-	m.mu.RUnlock()
+	appName := getAppNameFromLabels(labels, containerName)
 
-	// Wait a moment for container to fully start
-	time.Sleep(2 * time.Second)
+	// Check if already installed in fnOS
+	if m.installer != nil && m.installer.IsAppInstalled(appName) {
+		// Already installed, just start it
+		slog.Info("App already installed, starting", "app", appName)
+		if err := m.queueOperation("start", appName, ""); err != nil {
+			slog.Warn("Failed to start fnOS app", "app", appName, "error", err)
+		}
 
-	// Generate fnOS app package
-	config, appDir, err := m.generator.GenerateFromContainer(ctx, containerID)
-	if err != nil {
-		slog.Error("Failed to generate fnOS app", "container", containerName, "error", err)
-		return
-	}
-
-	// Check if already installed in fnOS (handles WatchCow restart case)
-	if m.installer != nil && m.installer.IsAppInstalled(config.AppName) {
-		slog.Info("App already installed in fnOS, skipping", "app", config.AppName, "container", containerName)
+		// Track in memory
 		m.mu.Lock()
 		m.containers[containerID] = &ContainerState{
 			ContainerID:   containerID,
 			ContainerName: containerName,
-			AppName:       config.AppName,
+			AppName:       appName,
 			Installed:     true,
 			Labels:        labels,
 		}
 		m.mu.Unlock()
-		m.generator.MarkInstalled(containerID, config)
+		return
+	}
+
+	// Not installed yet, generate and install
+	time.Sleep(2 * time.Second)
+
+	config, appDir, err := m.generator.GenerateFromContainer(ctx, containerID)
+	if err != nil {
+		slog.Error("Failed to generate fnOS app", "container", containerName, "error", err)
 		return
 	}
 
