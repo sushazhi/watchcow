@@ -29,15 +29,16 @@ func NewInstaller() (*Installer, error) {
 
 // findAppcenterCLI locates the appcenter-cli binary
 func findAppcenterCLI() (string, error) {
-	// Try common locations
+	// Try common locations on fnOS
 	paths := []string{
+		"/var/apps/appcenter/target/bin/appcenter-cli",
 		"/usr/bin/appcenter-cli",
 		"/usr/local/bin/appcenter-cli",
-		"/var/apps/appcenter/target/bin/appcenter-cli",
 	}
 
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
+			slog.Debug("Found appcenter-cli", "path", p)
 			return p, nil
 		}
 	}
@@ -45,7 +46,19 @@ func findAppcenterCLI() (string, error) {
 	// Try PATH
 	path, err := exec.LookPath("appcenter-cli")
 	if err == nil {
+		slog.Debug("Found appcenter-cli in PATH", "path", path)
 		return path, nil
+	}
+
+	// Try using 'which' command as fallback
+	whichCmd := exec.Command("which", "appcenter-cli")
+	output, err := whichCmd.Output()
+	if err == nil {
+		p := strings.TrimSpace(string(output))
+		if p != "" {
+			slog.Debug("Found appcenter-cli via which", "path", p)
+			return p, nil
+		}
 	}
 
 	return "", fmt.Errorf("appcenter-cli not found in common locations or PATH")
@@ -147,12 +160,33 @@ func (i *Installer) ListApps() ([]string, error) {
 	return apps, nil
 }
 
-// IsAppInstalled checks if an app is installed using appcenter-cli check
+// IsAppInstalled checks if an app is installed by parsing appcenter-cli list output
 func (i *Installer) IsAppInstalled(appName string) bool {
-	cmd := exec.Command(i.appcenterCLIPath, "check", appName)
-	err := cmd.Run()
-	// check command returns 0 if installed, non-zero if not
-	return err == nil
+	cmd := exec.Command(i.appcenterCLIPath, "list")
+	output, err := cmd.Output()
+	if err != nil {
+		slog.Debug("Failed to list apps", "error", err)
+		return false
+	}
+
+	// Parse table output - look for appName in the first column
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		// Skip header and separator lines
+		if strings.HasPrefix(line, "│") {
+			// Extract first column (app name)
+			parts := strings.Split(line, "│")
+			if len(parts) >= 2 {
+				installedApp := strings.TrimSpace(parts[1])
+				if installedApp == appName {
+					slog.Debug("App already installed", "appName", appName)
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 // CleanupAppDir removes the generated app directory

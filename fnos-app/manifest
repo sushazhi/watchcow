@@ -9,3 +9,4 @@ distributor  = WatchCow
 
 ctl_stop     = true
 checkport    = false
+install_type = root

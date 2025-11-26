@@ -43,7 +43,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: watchcow-fpk
+          name: watchcow.fpk
           path: watchcow.fpk
 
   release:
@@ -56,17 +56,10 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: watchcow-fpk
-
-      - name: Get version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Rename with version
-        run: mv watchcow.fpk watchcow-${{ steps.version.outputs.VERSION }}.fpk
+          name: watchcow.fpk
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: watchcow-${{ steps.version.outputs.VERSION }}.fpk
+          files: watchcow.fpk
           generate_release_notes: true

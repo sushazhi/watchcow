@@ -58,6 +58,8 @@ func NewMonitor(outputDir string) (*Monitor, error) {
 	if err != nil {
 		slog.Warn("appcenter-cli not available, will only generate app packages", "error", err)
 		// Continue without installer - useful for development/testing
+	} else {
+		slog.Info("Installer ready, apps will be auto-installed via appcenter-cli")
 	}
 
 	return &Monitor{
