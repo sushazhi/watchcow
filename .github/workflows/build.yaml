@@ -43,7 +43,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: watchcow.fpk
+          name: watchcow-package
           path: watchcow.fpk
 
   release:
@@ -56,7 +56,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: watchcow.fpk
+          name: watchcow-package
 
       - name: Create Release
         uses: softprops/action-gh-release@v1

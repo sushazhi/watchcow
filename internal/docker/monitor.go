@@ -16,6 +16,14 @@ import (
 	"watchcow/internal/fpkgen"
 )
 
+// AppOperation represents an appcenter-cli operation
+type AppOperation struct {
+	Type     string // "install", "stop", "uninstall"
+	AppName  string
+	AppDir   string
+	ResultCh chan error
+}
+
 // Monitor watches Docker containers and manages fnOS app installation
 type Monitor struct {
 	cli       *client.Client
@@ -27,6 +35,9 @@ type Monitor struct {
 	// Track container states
 	containers map[string]*ContainerState // map[containerID]state
 	mu         sync.RWMutex
+
+	// Operation queue for serializing appcenter-cli calls
+	opQueue chan *AppOperation
 }
 
 // ContainerState tracks the state of a monitored container
@@ -69,12 +80,61 @@ func NewMonitor(outputDir string) (*Monitor, error) {
 		outputDir:  outputDir,
 		stopCh:     make(chan struct{}),
 		containers: make(map[string]*ContainerState),
+		opQueue:    make(chan *AppOperation, 100),
 	}, nil
+}
+
+// runOperationWorker processes appcenter-cli operations sequentially
+func (m *Monitor) runOperationWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.stopCh:
+			return
+		case op := <-m.opQueue:
+			var err error
+			switch op.Type {
+			case "install":
+				slog.Info("Installing fnOS app", "app", op.AppName)
+				err = m.installer.InstallLocal(op.AppDir)
+			case "stop":
+				slog.Info("Stopping fnOS app", "app", op.AppName)
+				err = m.installer.StopApp(op.AppName)
+			case "uninstall":
+				slog.Info("Uninstalling fnOS app", "app", op.AppName)
+				err = m.installer.Uninstall(op.AppName)
+			}
+			if op.ResultCh != nil {
+				op.ResultCh <- err
+			}
+		}
+	}
+}
+
+// queueOperation sends an operation to the worker and waits for result
+func (m *Monitor) queueOperation(opType, appName, appDir string) error {
+	if m.installer == nil {
+		return nil
+	}
+	resultCh := make(chan error, 1)
+	m.opQueue <- &AppOperation{
+		Type:     opType,
+		AppName:  appName,
+		AppDir:   appDir,
+		ResultCh: resultCh,
+	}
+	return <-resultCh
 }
 
 // Start starts monitoring Docker containers
 func (m *Monitor) Start(ctx context.Context) {
 	slog.Info("Starting Docker monitor...", "outputDir", m.outputDir)
+
+	// Start operation worker for serializing appcenter-cli calls
+	if m.installer != nil {
+		go m.runOperationWorker(ctx)
+	}
 
 	// Initial scan to process existing containers
 	m.scanContainers(ctx)
@@ -134,9 +194,13 @@ func (m *Monitor) handleDockerEvent(ctx context.Context, event events.Message) {
 			go m.handleContainerStart(ctx, containerID, containerName, labels)
 		}
 
-	case "stop", "die", "destroy":
+	case "stop", "die":
 		slog.Info("Container stopped", "container", containerName, "id", containerID)
 		m.handleContainerStop(ctx, containerID, containerName)
+
+	case "destroy":
+		slog.Info("Container destroyed", "container", containerName, "id", containerID)
+		m.handleContainerDestroy(ctx, containerID, containerName)
 	}
 }
 
@@ -154,19 +218,19 @@ func shouldInstall(labels map[string]string) bool {
 
 // handleContainerStart handles container start event
 func (m *Monitor) handleContainerStart(ctx context.Context, containerID, containerName string, labels map[string]string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	// Check if already tracked in memory
+	m.mu.RLock()
 	if state, exists := m.containers[containerID]; exists && state.Installed {
+		m.mu.RUnlock()
 		slog.Debug("Container already tracked as installed", "container", containerName)
 		return
 	}
+	m.mu.RUnlock()
 
 	// Wait a moment for container to fully start
 	time.Sleep(2 * time.Second)
 
-	// Generate fnOS app package (to get appName)
+	// Generate fnOS app package
 	config, appDir, err := m.generator.GenerateFromContainer(ctx, containerID)
 	if err != nil {
 		slog.Error("Failed to generate fnOS app", "container", containerName, "error", err)
@@ -176,7 +240,7 @@ func (m *Monitor) handleContainerStart(ctx context.Context, containerID, contain
 	// Check if already installed in fnOS (handles WatchCow restart case)
 	if m.installer != nil && m.installer.IsAppInstalled(config.AppName) {
 		slog.Info("App already installed in fnOS, skipping", "app", config.AppName, "container", containerName)
-		// Track it in memory
+		m.mu.Lock()
 		m.containers[containerID] = &ContainerState{
 			ContainerID:   containerID,
 			ContainerName: containerName,
@@ -184,11 +248,13 @@ func (m *Monitor) handleContainerStart(ctx context.Context, containerID, contain
 			Installed:     true,
 			Labels:        labels,
 		}
+		m.mu.Unlock()
 		m.generator.MarkInstalled(containerID, config)
 		return
 	}
 
 	// Record state
+	m.mu.Lock()
 	m.containers[containerID] = &ContainerState{
 		ContainerID:   containerID,
 		ContainerName: containerName,
@@ -196,46 +262,52 @@ func (m *Monitor) handleContainerStart(ctx context.Context, containerID, contain
 		Installed:     false,
 		Labels:        labels,
 	}
+	m.mu.Unlock()
 
-	// Install if installer is available
-	if m.installer != nil {
-		if err := m.installer.InstallLocal(appDir); err != nil {
-			slog.Error("Failed to install fnOS app", "app", config.AppName, "error", err)
-			return
-		}
-		m.containers[containerID].Installed = true
-		slog.Info("Successfully installed fnOS app", "app", config.AppName, "container", containerName)
-	} else {
-		slog.Info("Generated fnOS app package (appcenter-cli not available)",
-			"app", config.AppName,
-			"appDir", appDir)
+	// Install via queue (serialized)
+	if err := m.queueOperation("install", config.AppName, appDir); err != nil {
+		slog.Error("Failed to install fnOS app", "app", config.AppName, "error", err)
+		return
 	}
 
-	// Mark as installed in generator
+	m.mu.Lock()
+	if state, exists := m.containers[containerID]; exists {
+		state.Installed = true
+	}
+	m.mu.Unlock()
+	slog.Info("Successfully installed fnOS app", "app", config.AppName, "container", containerName)
 	m.generator.MarkInstalled(containerID, config)
 }
 
-// handleContainerStop handles container stop event
+// handleContainerStop handles container stop event (stop app, keep installed)
 func (m *Monitor) handleContainerStop(ctx context.Context, containerID, containerName string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	m.mu.RLock()
 	state, exists := m.containers[containerID]
+	m.mu.RUnlock()
+
+	if !exists || !state.Installed {
+		return
+	}
+
+	// Stop via queue (serialized)
+	if err := m.queueOperation("stop", state.AppName, ""); err != nil {
+		slog.Warn("Failed to stop fnOS app", "app", state.AppName, "error", err)
+	}
+}
+
+// handleContainerDestroy handles container destroy event (uninstall app)
+func (m *Monitor) handleContainerDestroy(ctx context.Context, containerID, containerName string) {
+	m.mu.RLock()
+	state, exists := m.containers[containerID]
+	m.mu.RUnlock()
+
 	if !exists {
 		return
 	}
 
-	// Check if keep-on-stop is enabled (default: uninstall on container removal)
-	// Use watchcow.keepOnStop=true to keep the fnOS app when container stops
-	if state.Labels["watchcow.keepOnStop"] == "true" {
-		slog.Info("Keeping fnOS app (watchcow.keepOnStop=true)", "app", state.AppName)
-		return
-	}
-
-	// Uninstall fnOS app
-	if m.installer != nil && state.Installed {
-		slog.Info("Uninstalling fnOS app", "app", state.AppName, "container", containerName)
-		if err := m.installer.Uninstall(state.AppName); err != nil {
+	// Uninstall via queue (serialized)
+	if state.Installed {
+		if err := m.queueOperation("uninstall", state.AppName, ""); err != nil {
 			slog.Warn("Failed to uninstall fnOS app", "app", state.AppName, "error", err)
 		}
 	}
@@ -247,7 +319,9 @@ func (m *Monitor) handleContainerStop(ctx context.Context, containerID, containe
 	}
 
 	// Remove from tracking
+	m.mu.Lock()
 	delete(m.containers, containerID)
+	m.mu.Unlock()
 	m.generator.MarkUninstalled(containerID)
 }
 
