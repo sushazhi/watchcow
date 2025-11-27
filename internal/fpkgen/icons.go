@@ -24,12 +24,21 @@ func (g *Generator) handleIcons(appDir string, config *AppConfig) error {
 	var originalIcon image.Image
 	var err error
 
-	// Try to download icon from URL
-	if config.Icon != "" && strings.HasPrefix(config.Icon, "http") {
-		originalIcon, err = downloadIcon(config.Icon)
-		if err != nil {
-			// Log warning but continue with default icon
-			fmt.Printf("Warning: Failed to download icon from %s: %v\n", config.Icon, err)
+	// Try to load icon from various sources
+	if config.Icon != "" {
+		if strings.HasPrefix(config.Icon, "file://") {
+			// Load from local file path
+			localPath := strings.TrimPrefix(config.Icon, "file://")
+			originalIcon, err = loadLocalIcon(localPath)
+			if err != nil {
+				fmt.Printf("Warning: Failed to load icon from %s: %v\n", localPath, err)
+			}
+		} else if strings.HasPrefix(config.Icon, "http") {
+			// Download from URL
+			originalIcon, err = downloadIcon(config.Icon)
+			if err != nil {
+				fmt.Printf("Warning: Failed to download icon from %s: %v\n", config.Icon, err)
+			}
 		}
 	}
 
@@ -81,6 +90,21 @@ func loadDefaultIcon() (image.Image, error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
+	}
+
+	return img, nil
+}
+
+// loadLocalIcon loads an icon from local file path
+func loadLocalIcon(path string) (image.Image, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %w", err)
 	}
 
 	return img, nil
