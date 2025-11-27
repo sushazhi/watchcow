@@ -113,7 +113,7 @@ func loadLocalIcon(path string) (image.Image, error) {
 // downloadIcon downloads an icon from URL
 func downloadIcon(url string) (image.Image, error) {
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: 60 * time.Second,
 	}
 
 	resp, err := client.Get(url)
