@@ -7,67 +7,42 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **WatchCow** is a fnOS App Generator for Docker that monitors running Docker containers and automatically converts them into official fnOS applications using the `appcenter-cli install-local` command.
 
 The system works by:
-1. Monitoring Docker events (container start/stop)
+1. Monitoring Docker events (container start/stop/die/destroy)
 2. Detecting containers with `watchcow.enable=true` label
-3. Generating fnOS-compliant application directory structure
-4. Installing the app via `appcenter-cli install-local`
+3. Generating fnOS-compliant application package using Go templates
+4. Installing/starting/stopping/uninstalling via `appcenter-cli`
 
 ## Build & Development Commands
 
-### Building
 ```bash
 # Build for current platform
-make build
+go build -o watchcow ./cmd/watchcow
 
 # Cross-compile for fnOS (Linux amd64)
-make build-fnos
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o watchcow ./cmd/watchcow
 
-# Clean build artifacts
-make clean
+# Run with debug logging
+./watchcow --debug
+
+# Build fpk package for fnOS distribution
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o fnos-app/app/watchcow ./cmd/watchcow
+cd fnos-app && fnpack build
 ```
 
-### Installation on fnOS
-```bash
-# Build for fnOS
-make build-fnos
-
-# Copy to fnOS host and run install script
-scp build/watchcow-linux-amd64 install.sh watchcow.service user@fnos:/tmp/
-ssh user@fnos "cd /tmp && sudo ./install.sh"
-```
-
-### Running
-```bash
-# Run directly (development)
-make run
-
-# Run as systemd service (on fnOS)
-sudo systemctl start watchcow
-sudo systemctl status watchcow
-
-# View logs
-journalctl -u watchcow -f
-
-# Enable debug mode
-watchcow --debug
-```
-
-### Testing
-There are no automated tests. Testing is done manually:
+### Manual Testing
 
 ```bash
 # Create a test container with watchcow labels
 docker run -d \
   --name test-nginx \
   --label watchcow.enable=true \
-  --label watchcow.title="Test Nginx" \
-  --label watchcow.port=80 \
+  --label watchcow.display_name="Test Nginx" \
+  --label watchcow.service_port=80 \
   -p 8080:80 \
   nginx:alpine
 
-# Verify watchcow detected and installed the app
-journalctl -u watchcow | grep nginx
-appcenter-cli list | grep nginx
+# Use debug-generator to test package generation without Docker events
+go run ./cmd/debug-generator
 ```
 
 ## Architecture
@@ -75,40 +50,41 @@ appcenter-cli list | grep nginx
 ### Core Components
 
 **1. Docker Monitor (`internal/docker/monitor.go`)**
-- Listens to Docker daemon events (start/stop/die/destroy)
-- Detects containers with `watchcow.enable=true` label
-- Triggers fpkgen to generate and install apps
-- Tracks installed containers to avoid duplicates
+- Listens to Docker daemon events via Docker API
+- Maintains operation queue for serializing appcenter-cli calls
+- Tracks container states (installed/not installed)
+- Event handling: start → install/start app, stop/die → stop app, destroy → uninstall app
 
 **2. FPK Generator (`internal/fpkgen/`)**
-- `types.go` - Core type definitions (AppConfig, VolumeMapping, etc.)
-- `generator.go` - Main generator, extracts config from running containers
-- `manifest.go` - Generates fnOS manifest file
-- `compose.go` - Generates docker-compose.yaml from container config
-- `scripts.go` - Generates cmd/ lifecycle scripts (start/stop/status)
-- `config.go` - Generates config/privilege and config/resource files
-- `ui.go` - Generates UI configuration (app/ui/config)
-- `icons.go` - Downloads/generates app icons
-- `installer.go` - Wraps appcenter-cli commands
+- `generator.go` - Main generator, extracts config from container inspection, coordinates template rendering
+- `template.go` - Template engine using embedded Go templates, converts AppConfig to TemplateData
+- `types.go` - Core types: AppConfig, Entry, EntryControl, VolumeMapping
+- `icons.go` - Downloads icons from URL or reads from `file://` local path
+- `installer.go` - Wraps appcenter-cli commands (install-local, start, stop, uninstall)
+- `templates/*.tmpl` - Embedded Go templates for manifest, cmd scripts, config files
+
+**3. Templates (`internal/fpkgen/templates/`)**
+- `manifest.tmpl` - fnOS app manifest
+- `cmd_main.tmpl` - Main lifecycle script (start/stop/status)
+- `cmd_empty.tmpl` - Empty scripts for install/uninstall callbacks
+- `config_privilege.json.tmpl` - Run-as user configuration
+- `config_resource.json.tmpl` - Docker project configuration
 
 ### Generated App Structure
 
 ```
-/tmp/watchcow-apps/<app-name>/
-├── manifest                    # App metadata
-├── app/
-│   ├── docker-compose.yaml    # Container configuration
-│   └── ui/
-│       ├── config             # UI entry configuration
-│       └── images/
-│           └── ICON.PNG       # App icon
+<temp-dir>/
+├── manifest                    # App metadata (name, version, description)
+├── app/ui/
+│   ├── config                 # UI entry JSON (supports multiple entries)
+│   └── images/                # Entry icons
 ├── cmd/
-│   └── main                   # Lifecycle script
+│   ├── main                   # Lifecycle script (start/stop/status)
+│   └── *_init, *_callback     # Empty hook scripts
 ├── config/
 │   ├── privilege              # Run-as configuration
 │   └── resource               # Docker project config
-├── ICON.PNG                   # App icon (256x256)
-└── ICON_256.PNG               # App icon (256x256)
+└── LICENSE
 ```
 
 ### Key Data Flow
@@ -116,70 +92,68 @@ appcenter-cli list | grep nginx
 ```
 Docker Event (container start)
         ↓
-Docker Monitor (detect watchcow.enable=true)
+Monitor.handleDockerEvent() → shouldInstall() check
         ↓
-FPK Generator (extract container config)
+Generator.GenerateFromContainer() → extractConfig() → parseEntries()
         ↓
-Generate App Directory Structure
+NewTemplateData() → generateFromTemplates() + handleIcons()
         ↓
-appcenter-cli install-local
+queueOperation("install") → Installer.InstallLocal()
         ↓
 App appears in fnOS App Center
 ```
 
-### Smart Container Lifecycle
+### Container Lifecycle Mapping
 
-The generated `cmd/main` script handles the "container already running" scenario:
-- On `start`: Checks if container exists and is running, skips if true
-- On `stop`: Logs message but doesn't stop (container managed externally)
-- On `status`: Returns proper exit codes for fnOS
+| Docker Event | fnOS Action |
+|--------------|-------------|
+| start (not installed) | Generate package + `appcenter-cli install-local` |
+| start (already installed) | `appcenter-cli start` |
+| stop/die | `appcenter-cli stop` |
+| destroy | `appcenter-cli uninstall` |
 
-### WatchCow Labels
+## WatchCow Labels (v0.2)
 
-Containers can be configured with labels:
-- `watchcow.enable`: "true" to enable app generation (required)
-- `watchcow.install`: "true" to auto-install via appcenter-cli
-- `watchcow.title`: Display name in fnOS
-- `watchcow.port`: Web UI port
-- `watchcow.protocol`: "http" or "https" (default: http)
-- `watchcow.path`: URL path (default: /)
-- `watchcow.icon`: URL to download icon from
-- `watchcow.category`: App category (default: "工具")
-- `watchcow.description`: App description
+### App-Level Labels
+| Label | Default | Description |
+|-------|---------|-------------|
+| `watchcow.enable` | - | Required: set to `"true"` to enable |
+| `watchcow.appname` | `watchcow.<container>` | Unique app identifier |
+| `watchcow.display_name` | Container name | Human-readable name |
+| `watchcow.desc` | Image name | App description |
+| `watchcow.version` | `1.0.0` | App version |
+| `watchcow.maintainer` | `WatchCow` | Maintainer name |
 
-## Platform Requirements
+### Entry Labels (default entry)
+| Label | Default | Description |
+|-------|---------|-------------|
+| `watchcow.service_port` | First exposed port | Web UI port |
+| `watchcow.protocol` | `http` | `http` or `https` |
+| `watchcow.path` | `/` | URL path |
+| `watchcow.ui_type` | `url` | `url` (new tab) or `iframe` (desktop window) |
+| `watchcow.all_users` | `true` | Access permission |
+| `watchcow.icon` | Auto-guessed | Icon URL or `file://` path |
+| `watchcow.file_types` | - | Comma-separated file types for right-click menu |
+| `watchcow.no_display` | `false` | Hide from desktop |
 
-- **fnOS host** (Debian 12 based)
-- **Docker** installed and running
-- **appcenter-cli** available (fnOS built-in)
-- Must run with access to Docker socket
+### Multi-Entry Support
+Named entries use `watchcow.<entry>.<field>` format (e.g., `watchcow.admin.service_port`).
+Entry fields: `service_port`, `protocol`, `path`, `ui_type`, `all_users`, `icon`, `title`, `file_types`, `no_display`, `control.*`
 
 ## Development Guidelines
 
 ### When Adding Features
-- Container config extraction is in `fpkgen/generator.go:GenerateFromContainer()`
-- Manifest generation is in `fpkgen/manifest.go`
-- Docker-compose generation is in `fpkgen/compose.go`
-- Script generation is in `fpkgen/scripts.go`
+- Container config extraction: `generator.go:extractConfig()` and `parseEntries()`
+- Template data conversion: `template.go:NewTemplateData()`
+- New config fields: Add to `types.go:AppConfig/Entry`, then update `extractConfig()` and `NewTemplateData()`
+- New templates: Add `.tmpl` file to `templates/`, update `generateFromTemplates()` mappings
+
+### Icon Handling
+- Icons are downloaded via HTTP or read from `file://` paths
+- Auto-guessing uses Dashboard Icons CDN based on image name mapping in `guessIcon()`
+- Icons are resized to 256x256 PNG
 
 ### Debugging
-- Use `--debug` flag for verbose logging
-- Check generated app directory: `ls -la /tmp/watchcow-apps/<app-name>/`
-- Verify manifest: `cat /tmp/watchcow-apps/<app-name>/manifest`
-- Check appcenter-cli: `appcenter-cli list`
-
-### Common Issues
-- Container must have `watchcow.enable=true` label to be detected
-- appcenter-cli must be available for auto-installation
-- Icon download requires network access (falls back to placeholder)
-- Container name becomes app name (sanitized to alphanumeric)
-
-## Important Files
-
-- `cmd/watchcow/main.go` - Entry point, flag parsing, initialization
-- `internal/docker/monitor.go` - Docker event monitoring
-- `internal/fpkgen/generator.go` - Main app generation logic
-- `internal/fpkgen/installer.go` - appcenter-cli integration
-- `Makefile` - Build commands
-- `install.sh` - Installation script for fnOS
-- `watchcow.service` - systemd service file
+- `--debug` flag enables slog.LevelDebug
+- `cmd/debug-generator` - Test package generation with mock AppConfig
+- Generated packages are in temp directories (cleaned up after install)

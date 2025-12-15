@@ -41,9 +41,8 @@ func (g *Generator) handleIcons(appDir string, config *AppConfig) error {
 			entryIcon = defaultIcon
 		}
 
-		// Resize to required sizes
-		icon64 := resizeImage(entryIcon, 64, 64)
-		icon256 := resizeImage(entryIcon, 256, 256)
+		// Pad to square and resize to required sizes
+		icon64, icon256 := prepareIcons(entryIcon)
 
 		// Generate icon filenames based on entry name
 		// Default entry: icon_64.png, icon_256.png
@@ -98,8 +97,7 @@ func (g *Generator) handleIcons(appDir string, config *AppConfig) error {
 				entryIcon = defaultIcon
 			}
 			if entryIcon != nil {
-				icon64 := resizeImage(entryIcon, 64, 64)
-				icon256 := resizeImage(entryIcon, 256, 256)
+				icon64, icon256 := prepareIcons(entryIcon)
 				saveImage(icon64, filepath.Join(appDir, "ICON.PNG"))
 				saveImage(icon256, filepath.Join(appDir, "ICON_256.PNG"))
 			}
@@ -188,10 +186,50 @@ func downloadIcon(url string) (image.Image, error) {
 	return img, nil
 }
 
+// prepareIcons pads a non-square image to square and resizes to 64x64 and 256x256
+func prepareIcons(src image.Image) (icon64, icon256 image.Image) {
+	squared := squareImage(src)
+	icon64 = resizeImage(squared, 64, 64)
+	icon256 = resizeImage(squared, 256, 256)
+	return
+}
+
 // resizeImage resizes an image to the specified dimensions
 func resizeImage(src image.Image, width, height int) image.Image {
 	dst := image.NewRGBA(image.Rect(0, 0, width, height))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
+	return dst
+}
+
+// squareImage pads a non-square image to make it square, centering the original image
+// The background is transparent
+func squareImage(src image.Image) image.Image {
+	bounds := src.Bounds()
+	srcWidth := bounds.Dx()
+	srcHeight := bounds.Dy()
+
+	// If already square, return as-is
+	if srcWidth == srcHeight {
+		return src
+	}
+
+	// Determine the size of the square (use the larger dimension)
+	size := srcWidth
+	if srcHeight > srcWidth {
+		size = srcHeight
+	}
+
+	// Create a new transparent square image
+	dst := image.NewRGBA(image.Rect(0, 0, size, size))
+
+	// Calculate offset to center the original image
+	offsetX := (size - srcWidth) / 2
+	offsetY := (size - srcHeight) / 2
+
+	// Draw the source image centered on the square canvas
+	dstRect := image.Rect(offsetX, offsetY, offsetX+srcWidth, offsetY+srcHeight)
+	xdraw.Copy(dst, dstRect.Min, src, bounds, xdraw.Over, nil)
+
 	return dst
 }
 
